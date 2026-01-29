@@ -1,0 +1,802 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { 
+  Settings, 
+  CheckCircle2, 
+  XCircle, 
+  BookOpen, 
+  Filter, 
+  ChevronDown, 
+  Play,
+  Award,
+  Zap,
+  Brain,
+  FlaskConical,
+  Calculator,
+  Dna,
+  Globe,
+  X,
+  Sparkles,
+  MessageCircle,
+  Send,
+  Loader2,
+  RefreshCw
+} from 'lucide-react';
+
+/**
+ * ------------------------------------------------------------------
+ * GEMINI API INTEGRATION
+ * ------------------------------------------------------------------
+ */
+const API_KEY = ""; // Environment will provide key
+
+const callGeminiAPI = async (prompt, systemInstruction = "") => {
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        }),
+      }
+    );
+
+    if (!response.ok) throw new Error('API call failed');
+    
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    return text ? JSON.parse(text) : null;
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    return null;
+  }
+};
+
+const callGeminiChat = async (history, userMsg) => {
+  try {
+    // Basic text generation for chat (non-JSON mode)
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            ...history, // { role: "user" | "model", parts: [{ text: "..." }] }
+            { role: "user", parts: [{ text: userMsg }] }
+          ]
+        }),
+      }
+    );
+    if (!response.ok) throw new Error('Chat API failed');
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "I couldn't generate a response.";
+  } catch (e) {
+    return "Sorry, I'm having trouble connecting to the AI Tutor right now.";
+  }
+};
+
+
+/**
+ * ------------------------------------------------------------------
+ * PROCEDURAL FALLBACKS
+ * ------------------------------------------------------------------
+ * Used when API fails or for instant initial load.
+ */
+
+const EXAM_TYPES = ['JEE', 'NEET'];
+const SUBJECTS = {
+  JEE: ['Physics', 'Chemistry', 'Maths'],
+  NEET: ['Physics', 'Chemistry', 'Biology']
+};
+
+const LANGUAGES = [
+  'English', 'Hindi', 'Gujarati', 'Marathi', 'Bengali', 
+  'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Punjabi', 
+  'Assamese', 'Odia', 'Urdu'
+];
+
+const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const roundTo = (num, places) => Number(num.toFixed(places));
+
+const FALLBACK_TEMPLATES = {
+  Physics: [
+    {
+      level: 1,
+      gen: () => {
+        const u = rnd(5, 20);
+        const a = rnd(2, 10);
+        const t = rnd(2, 5);
+        const v = u + a * t;
+        return {
+          text: `A particle starts with an initial velocity of ${u} m/s and accelerates at ${a} m/s² for ${t} seconds. What is its final velocity?`,
+          options: [`${v} m/s`, `${v + rnd(1,5)} m/s`, `${v - rnd(1,5)} m/s`, `${u + a} m/s`],
+          correct: 0,
+          solution: `Using v = u + at: v = ${u} + (${a} × ${t}) = ${v} m/s.`
+        };
+      }
+    },
+    {
+      level: 3,
+      gen: () => {
+        const m = rnd(2, 10);
+        const f = rnd(10, 50);
+        const a = f / m;
+        return {
+          text: `A force of ${f} N is applied to a body of mass ${m} kg. What is the acceleration produced?`,
+          options: [`${roundTo(a, 1)} m/s²`, `${roundTo(a * 2, 1)} m/s²`, `${roundTo(a / 2, 1)} m/s²`, `${roundTo(f + m, 1)} m/s²`],
+          correct: 0,
+          solution: `Newton's Second Law F=ma -> a=F/m -> a=${f}/${m} = ${roundTo(a, 2)} m/s².`
+        };
+      }
+    }
+  ],
+  Chemistry: [
+    {
+      level: 2,
+      gen: () => {
+        const ph = rnd(3, 11);
+        const poh = 14 - ph;
+        return {
+          text: `If the pH of a solution is ${ph}, what is its pOH at 25°C?`,
+          options: [`${poh}`, `${ph}`, `7`, `14`],
+          correct: 0,
+          solution: `pH + pOH = 14. Thus, pOH = 14 - ${ph} = ${poh}.`
+        };
+      }
+    }
+  ],
+  Maths: [
+    {
+      level: 2,
+      gen: () => {
+        const a = rnd(2, 5);
+        return {
+          text: `Evaluate ∫ x^${a} dx`,
+          options: [`x^${a+1}/${a+1} + C`, `x^${a-1}/${a-1} + C`, `${a}x^${a-1} + C`, `x^${a+1} + C`],
+          correct: 0,
+          solution: `Power rule: ∫ x^n dx = x^(n+1)/(n+1). Result: x^${a+1}/${a+1} + C.`
+        };
+      }
+    }
+  ],
+  Biology: [
+    {
+      level: 1,
+      gen: () => pick([
+        { t: "Which is the 'Powerhouse of the cell'?", o: ["Mitochondria", "Nucleus", "Ribosome", "Lysosome"], c: 0, s: "Mitochondria produce ATP." },
+        { t: "DNA stands for:", o: ["Deoxyribonucleic Acid", "Deoxyribo Acid", "Dinucleic Acid", "Delta Acid"], c: 0, s: "It is the hereditary material." }
+      ])
+    }
+  ]
+};
+
+const generateFallbackQuestion = (filters) => {
+  let availableSubjects = filters.subject === 'Mix' ? SUBJECTS[filters.exam] : [filters.subject];
+  const subject = pick(availableSubjects);
+  const targetLevel = Math.max(1, Math.min(5, filters.difficulty + rnd(-1, 1)));
+  
+  const subjectTemplates = FALLBACK_TEMPLATES[subject] || FALLBACK_TEMPLATES['Physics']; // Safe fallback
+  const templateObj = subjectTemplates.reduce((prev, curr) => 
+    (Math.abs(curr.level - targetLevel) < Math.abs(prev.level - targetLevel) ? curr : prev), subjectTemplates[0]);
+
+  const rawQ = templateObj.gen();
+  const indices = [0, 1, 2, 3];
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
+  return {
+    id: Math.random().toString(36).substr(2, 9),
+    subject,
+    type: filters.exam,
+    difficulty: templateObj.level,
+    text: rawQ.text + (rawQ.t || ""), // Handle both template styles
+    options: indices.map(i => rawQ.options?.[i] || rawQ.o?.[i]),
+    correctIndex: indices.indexOf(rawQ.correct !== undefined ? rawQ.correct : rawQ.c),
+    solution: rawQ.solution || rawQ.s,
+    isAiGenerated: false
+  };
+};
+
+/**
+ * ------------------------------------------------------------------
+ * COMPONENTS
+ * ------------------------------------------------------------------
+ */
+
+const AITutorChat = ({ questionData, onClose }) => {
+  const [messages, setMessages] = useState([
+    { role: 'model', text: `Hi! I'm your AI Tutor. I can help you understand this ${questionData.subject} problem better. What's confusing you?` }
+  ]);
+  const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(scrollToBottom, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    
+    const userMsg = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsTyping(true);
+
+    // Prepare history for Gemini context
+    // We inject the question context as a system-like message at the start of the prompt for the turn
+    const contextPrompt = `
+      Context:
+      Question: "${questionData.text}"
+      Correct Answer: "${questionData.options[questionData.correctIndex]}"
+      Given Solution: "${questionData.solution}"
+      
+      User Question: "${userMsg}"
+      
+      Answer the user as a helpful, encouraging tutor. Keep it brief (under 3 sentences) unless asked for details.
+    `;
+
+    // Convert existing messages to Gemini format
+    const history = messages.map(m => ({
+      role: m.role,
+      parts: [{ text: m.text }]
+    }));
+
+    const reply = await callGeminiChat(history, contextPrompt);
+    
+    setIsTyping(false);
+    setMessages(prev => [...prev, { role: 'model', text: reply }]);
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-gray-900 rounded-2xl overflow-hidden border border-gray-700 animate-in fade-in zoom-in-95 duration-200">
+      {/* Chat Header */}
+      <div className="p-4 border-b border-gray-800 bg-gray-800/50 flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <Sparkles className="text-indigo-400 w-5 h-5 fill-indigo-400/20 animate-pulse" />
+          <h3 className="font-bold text-white">AI Tutor</h3>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <X size={18} />
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+              m.role === 'user' 
+                ? 'bg-indigo-600 text-white rounded-br-sm' 
+                : 'bg-gray-800 text-gray-200 rounded-bl-sm border border-gray-700'
+            }`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {isTyping && (
+          <div className="flex justify-start">
+             <div className="bg-gray-800 rounded-2xl px-4 py-3 flex items-center gap-2">
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+             </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-3 border-t border-gray-800 bg-gray-900">
+        <form 
+          onSubmit={(e) => { e.preventDefault(); handleSend(); }}
+          className="flex gap-2"
+        >
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask a doubt..."
+            className="flex-1 bg-gray-800 text-white text-sm rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 border border-transparent focus:border-indigo-500/50"
+          />
+          <button 
+            type="submit" 
+            disabled={!input.trim() || isTyping}
+            className="bg-indigo-600 text-white p-3 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-500 transition"
+          >
+            <Send size={18} />
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const QuestionCard = ({ data, onScrollNext }) => {
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [showSolution, setShowSolution] = useState(false);
+  const [showAiChat, setShowAiChat] = useState(false);
+
+  useEffect(() => {
+    setSelectedOption(null);
+    setIsSubmitted(false);
+    setShowSolution(false);
+    setShowAiChat(false);
+  }, [data.id]);
+
+  const handleOptionClick = (idx) => {
+    if (isSubmitted) return;
+    setSelectedOption(idx);
+  };
+
+  const handleSubmit = () => {
+    if (selectedOption === null) return;
+    setIsSubmitted(true);
+  };
+
+  const isCorrect = selectedOption === data.correctIndex;
+
+  const getOptionStyle = (idx) => {
+    const baseStyle = "w-full p-4 mb-3 rounded-xl border-2 text-left transition-all duration-200 relative overflow-hidden group";
+    
+    if (!isSubmitted) {
+      if (selectedOption === idx) {
+        return `${baseStyle} border-blue-500 bg-blue-500/10 text-blue-100`;
+      }
+      return `${baseStyle} border-gray-700 bg-gray-800/40 hover:bg-gray-800 hover:border-gray-600`;
+    }
+
+    if (idx === data.correctIndex) {
+      return `${baseStyle} border-green-500 bg-green-500/20 text-green-100`;
+    }
+    if (idx === selectedOption && !isCorrect) {
+      return `${baseStyle} border-red-500 bg-red-500/20 text-red-100`;
+    }
+    return `${baseStyle} border-gray-800 bg-gray-900/20 opacity-50`;
+  };
+
+  return (
+    <div className="h-[100dvh] w-full snap-start flex flex-col items-center justify-center p-4 relative shrink-0">
+      
+      {/* Background decoration */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className={`absolute top-[-10%] right-[-10%] w-64 h-64 rounded-full blur-[100px] opacity-20 ${
+          data.subject === 'Maths' ? 'bg-blue-600' : 
+          data.subject === 'Physics' ? 'bg-purple-600' : 
+          data.subject === 'Biology' ? 'bg-green-600' : 'bg-yellow-600'
+        }`}></div>
+      </div>
+
+      <div className="w-full max-w-md z-10 flex flex-col h-full justify-center">
+        {/* Header Tags */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex gap-2">
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-white/10 backdrop-blur-md border border-white/10 uppercase tracking-wider text-gray-300">
+              {data.type}
+            </span>
+            <span className={`px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md border uppercase tracking-wider ${
+              data.subject === 'Maths' ? 'bg-blue-500/20 border-blue-500/30 text-blue-300' :
+              data.subject === 'Physics' ? 'bg-purple-500/20 border-purple-500/30 text-purple-300' :
+              data.subject === 'Biology' ? 'bg-green-500/20 border-green-500/30 text-green-300' :
+              'bg-yellow-500/20 border-yellow-500/30 text-yellow-300'
+            }`}>
+              {data.subject}
+            </span>
+            {data.isAiGenerated && (
+              <span className="px-2 py-1 rounded-full text-xs font-bold bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 flex items-center gap-1">
+                <Sparkles size={10} /> AI
+              </span>
+            )}
+          </div>
+          <div className="flex gap-1">
+             {[...Array(5)].map((_, i) => (
+               <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < data.difficulty ? 'bg-yellow-400' : 'bg-gray-700'}`} />
+             ))}
+          </div>
+        </div>
+
+        {/* Question Area */}
+        <div className="mb-8 relative">
+          <h2 className="text-xl md:text-2xl font-semibold leading-relaxed text-white drop-shadow-sm">
+            {data.text}
+          </h2>
+        </div>
+
+        {/* Options */}
+        <div className="space-y-1 mb-8">
+          {data.options.map((opt, idx) => (
+            <button
+              key={idx}
+              onClick={() => handleOptionClick(idx)}
+              className={getOptionStyle(idx)}
+              disabled={isSubmitted}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base md:text-lg font-medium">{opt}</span>
+                {isSubmitted && idx === data.correctIndex && <CheckCircle2 className="text-green-400 w-5 h-5" />}
+                {isSubmitted && idx === selectedOption && !isCorrect && <XCircle className="text-red-400 w-5 h-5" />}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Action Bar */}
+        <div className="h-16 flex items-center justify-between relative">
+          {!isSubmitted ? (
+            <button 
+              onClick={handleSubmit}
+              disabled={selectedOption === null}
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-all duration-300 ${
+                selectedOption !== null 
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30 transform scale-100' 
+                : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Submit Answer
+            </button>
+          ) : (
+            <div className="flex gap-3 w-full animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <button
+                onClick={() => setShowSolution(true)}
+                className="flex-1 py-3 px-4 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-semibold hover:bg-gray-700 transition flex items-center justify-center gap-2"
+              >
+                <BookOpen size={18} />
+                Explanation
+              </button>
+              <button
+                onClick={onScrollNext}
+                className="flex-1 py-3 px-4 rounded-xl bg-white text-black font-bold hover:bg-gray-200 transition flex items-center justify-center gap-2 shadow-lg shadow-white/10"
+              >
+                Next
+                <ChevronDown size={18} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Solution / AI Tutor Modal */}
+      {(showSolution || showAiChat) && (
+        <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-gray-900 border border-gray-700 w-full max-w-md h-[60vh] sm:h-auto rounded-3xl shadow-2xl relative animate-in slide-in-from-bottom-10 duration-300 flex flex-col overflow-hidden">
+            
+            {showAiChat ? (
+               <AITutorChat questionData={data} onClose={() => setShowAiChat(false)} />
+            ) : (
+              <>
+                <div className="p-6 overflow-y-auto custom-scrollbar">
+                  <button 
+                    onClick={() => setShowSolution(false)}
+                    className="absolute top-4 right-4 p-2 bg-gray-800 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white z-10"
+                  >
+                    <X size={20} />
+                  </button>
+                  <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                    <Zap className="text-yellow-400 fill-yellow-400" size={20} />
+                    Solution
+                  </h3>
+                  <div className="prose prose-invert prose-sm">
+                    <p className="whitespace-pre-wrap text-gray-300 leading-relaxed text-base">
+                      {data.solution}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="p-4 border-t border-gray-800 bg-gray-800/30">
+                  <button 
+                    onClick={() => setShowAiChat(true)}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold flex items-center justify-center gap-2 hover:shadow-lg hover:shadow-indigo-500/20 transition"
+                  >
+                    <Sparkles size={18} className="text-yellow-200" />
+                    Ask AI Tutor
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const FilterModal = ({ isOpen, onClose, filters, setFilters }) => {
+  if (!isOpen) return null;
+
+  const validSubjects = SUBJECTS[filters.exam];
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in">
+      <div className="bg-[#121212] w-full max-w-md rounded-3xl border border-gray-800 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="p-6 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            Preferences
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition">
+            <X size={20} className="text-gray-400" />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-8 custom-scrollbar">
+          <section>
+            <label className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">Target Exam</label>
+            <div className="grid grid-cols-2 gap-3">
+              {EXAM_TYPES.map(type => (
+                <button
+                  key={type}
+                  onClick={() => setFilters({ ...filters, exam: type, subject: 'Mix' })}
+                  className={`py-3 px-4 rounded-xl font-bold transition-all border-2 ${
+                    filters.exam === type 
+                    ? 'bg-white text-black border-white shadow-lg' 
+                    : 'bg-gray-900 text-gray-400 border-gray-800 hover:border-gray-600'
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section>
+            <label className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">Subject</label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                 onClick={() => setFilters({ ...filters, subject: 'Mix' })}
+                 className={`py-2 px-4 rounded-lg text-sm font-semibold border transition-all ${
+                   filters.subject === 'Mix'
+                   ? 'bg-indigo-600 border-indigo-500 text-white'
+                   : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600'
+                 }`}
+              >
+                Mix All
+              </button>
+              {validSubjects.map(sub => (
+                <button
+                  key={sub}
+                  onClick={() => setFilters({ ...filters, subject: sub })}
+                  className={`py-2 px-4 rounded-lg text-sm font-semibold border transition-all flex items-center gap-2 ${
+                    filters.subject === sub
+                    ? 'bg-indigo-600 border-indigo-500 text-white'
+                    : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  {sub === 'Physics' && <Zap size={14} />}
+                  {sub === 'Chemistry' && <FlaskConical size={14} />}
+                  {sub === 'Maths' && <Calculator size={14} />}
+                  {sub === 'Biology' && <Dna size={14} />}
+                  {sub}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section>
+            <div className="flex justify-between items-center mb-3">
+               <label className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Difficulty</label>
+               <span className="text-indigo-400 font-bold">Level {filters.difficulty}</span>
+            </div>
+            <div className="h-12 bg-gray-900 rounded-xl p-1 flex relative">
+              {[1, 2, 3, 4, 5].map(lvl => (
+                 <button 
+                  key={lvl}
+                  onClick={() => setFilters({...filters, difficulty: lvl})}
+                  className={`flex-1 rounded-lg text-sm font-bold transition-all z-10 ${
+                    filters.difficulty === lvl ? 'text-white' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                 >
+                   {lvl}
+                 </button>
+              ))}
+              <div 
+                className="absolute top-1 bottom-1 bg-indigo-600 rounded-lg transition-all duration-300"
+                style={{ 
+                  left: `${((filters.difficulty - 1) * 20) + 1}%`, 
+                  width: '18%' 
+                }}
+              />
+            </div>
+          </section>
+          <section>
+            <label className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">Language</label>
+            <div className="relative">
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <select 
+                value={filters.language}
+                onChange={(e) => setFilters({...filters, language: e.target.value})}
+                className="w-full bg-gray-900 border border-gray-800 text-white rounded-xl py-3 pl-10 pr-4 appearance-none focus:outline-none focus:border-indigo-500"
+              >
+                {LANGUAGES.map(lang => (
+                  <option key={lang} value={lang}>{lang}</option>
+                ))}
+              </select>
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                <ChevronDown size={16} className="text-gray-500" />
+              </div>
+            </div>
+          </section>
+        </div>
+        <div className="p-6 border-t border-gray-800 bg-gray-900/30">
+          <button 
+            onClick={onClose}
+            className="w-full py-3 bg-white text-black font-bold rounded-xl hover:bg-gray-200 transition"
+          >
+            Apply Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default function App() {
+  const [questions, setQuestions] = useState([]);
+  const [filters, setFilters] = useState({
+    exam: 'JEE',
+    difficulty: 3,
+    subject: 'Mix',
+    language: 'English'
+  });
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const scrollContainerRef = useRef(null);
+
+  // Initial Load (Instant Fallback)
+  useEffect(() => {
+    setQuestions([]); // Clear old questions
+    // 1. Load some instant fallback questions
+    const instantBatch = Array.from({ length: 3 }).map(() => generateFallbackQuestion(filters));
+    setQuestions(instantBatch);
+    // 2. Fetch AI questions in background
+    fetchQuestionsFromGemini(filters, 2);
+  }, [filters]);
+
+  const fetchQuestionsFromGemini = async (currentFilters, count = 2) => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+
+    const subjectText = currentFilters.subject === 'Mix' ? 'Physics, Chemistry, or Maths' : currentFilters.subject;
+    
+    const prompt = `
+      You are an expert exam setter for ${currentFilters.exam} (India).
+      Generate ${count} distinct multiple choice questions.
+      Subject: ${subjectText}.
+      Difficulty Level: ${currentFilters.difficulty}/5.
+      Language: ${currentFilters.language}.
+      
+      Requirements:
+      1. Questions must be conceptual or numerical.
+      2. Return ONLY a raw JSON array.
+      3. Format: [{ "text": "Question String", "options": ["A", "B", "C", "D"], "correctIndex": 0-3 (number), "solution": "Detailed explanation" }]
+      4. Ensure one option is definitely correct.
+      5. Do NOT use markdown code blocks. Just the JSON.
+    `;
+
+    const data = await callGeminiAPI(prompt);
+    
+    if (data && Array.isArray(data)) {
+      const formatted = data.map(q => ({
+        ...q,
+        id: Math.random().toString(36).substr(2, 9),
+        subject: currentFilters.subject === 'Mix' ? 'AI Generated' : currentFilters.subject,
+        type: currentFilters.exam,
+        difficulty: currentFilters.difficulty,
+        isAiGenerated: true
+      }));
+      setQuestions(prev => [...prev, ...formatted]);
+    } else {
+      // Fallback if API fails
+      const fallbackBatch = Array.from({ length: count }).map(() => generateFallbackQuestion(currentFilters));
+      setQuestions(prev => [...prev, ...fallbackBatch]);
+    }
+    
+    setIsGenerating(false);
+  };
+
+  const handleScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    // Trigger fetch when user is 1.5 screens away from bottom
+    if (scrollHeight - scrollTop - clientHeight < clientHeight * 1.5) {
+      if (!isGenerating) {
+        fetchQuestionsFromGemini(filters, 2);
+      }
+    }
+  };
+
+  const scrollNext = () => {
+    if (scrollContainerRef.current) {
+      const h = scrollContainerRef.current.clientHeight;
+      scrollContainerRef.current.scrollBy({ top: h, behavior: 'smooth' });
+    }
+  };
+
+  return (
+    <div className="bg-black text-white h-[100dvh] w-full font-sans overflow-hidden flex flex-col relative">
+      
+      {/* Top Bar */}
+      <header className="absolute top-0 left-0 right-0 z-40 p-4 pointer-events-none flex justify-between items-start">
+         <div className="pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 p-2 pr-4 rounded-full flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center relative overflow-hidden">
+              <Brain size={18} className="text-white z-10" />
+              <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+            </div>
+            <span className="font-bold tracking-tight">PrepStream</span>
+            <span className="text-[10px] font-bold bg-indigo-600 px-1.5 py-0.5 rounded ml-1">AI</span>
+         </div>
+
+         <button 
+            onClick={() => setIsFilterOpen(true)}
+            className="pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition"
+         >
+            <Filter size={18} />
+         </button>
+      </header>
+
+      {/* Main Reels Container */}
+      <main 
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-scroll snap-y snap-mandatory scroll-smooth no-scrollbar"
+        style={{ scrollBehavior: 'smooth' }}
+      >
+        {questions.map((q, i) => (
+          <QuestionCard 
+            key={`${q.id}-${i}`} 
+            data={q} 
+            onScrollNext={scrollNext}
+          />
+        ))}
+        
+        {/* Loading Indicator */}
+        <div className="h-32 w-full snap-end flex flex-col items-center justify-center text-gray-500 gap-2">
+           <Loader2 className="animate-spin text-indigo-500" size={32} />
+           <p className="text-sm font-medium animate-pulse">Crafting new questions with Gemini...</p>
+        </div>
+      </main>
+
+      <FilterModal 
+        isOpen={isFilterOpen} 
+        onClose={() => setIsFilterOpen(false)} 
+        filters={filters}
+        setFilters={setFilters}
+      />
+    </div>
+  );
+}
+
+// Global CSS for scrollbar hiding
+const style = document.createElement('style');
+style.textContent = `
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+`;
+document.head.appendChild(style);
