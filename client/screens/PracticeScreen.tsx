@@ -6,26 +6,23 @@ import {
   Dimensions,
   Pressable,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useHeaderHeight } from "@react-navigation/elements";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import Animated, { FadeIn } from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { QuestionCard } from "@/components/QuestionCard";
 import { FiltersModal } from "@/components/FiltersModal";
-import { AITutorChat } from "@/components/AITutorChat";
 import { useTheme } from "@/hooks/useTheme";
-import { Spacing, BorderRadius } from "@/constants/theme";
+import { Spacing } from "@/constants/theme";
 import { Question, Filters, DEFAULT_FILTERS } from "@/types/question";
 import { storage } from "@/lib/storage";
 import { generateFallbackBatch } from "@/lib/fallback-questions";
 import { apiRequest } from "@/lib/query-client";
 
-const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get("window");
+const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function PracticeScreen() {
   const { theme } = useTheme();
@@ -38,8 +35,7 @@ export default function PracticeScreen() {
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [showTutor, setShowTutor] = useState(false);
-  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     loadFilters();
@@ -47,7 +43,7 @@ export default function PracticeScreen() {
 
   useEffect(() => {
     loadQuestions();
-  }, [filters]);
+  }, [refreshKey]);
 
   const loadFilters = async () => {
     const savedFilters = await storage.getFilters();
@@ -105,6 +101,10 @@ export default function PracticeScreen() {
     await storage.setFilters(newFilters);
   };
 
+  const handleApplyFilters = () => {
+    setRefreshKey((prev) => prev + 1);
+  };
+
   const handleScroll = useCallback(
     (event: any) => {
       const offsetY = event.nativeEvent.contentOffset.y;
@@ -121,25 +121,10 @@ export default function PracticeScreen() {
   const handleAnswered = (isCorrect: boolean) => {
   };
 
-  const handleAskTutor = (question: Question) => {
-    setSelectedQuestion(question);
-    setShowTutor(true);
-  };
-
-  const scrollToNext = () => {
-    if (currentIndex < questions.length - 1) {
-      flatListRef.current?.scrollToIndex({
-        index: currentIndex + 1,
-        animated: true,
-      });
-    }
-  };
-
   const renderQuestion = ({ item, index }: { item: Question; index: number }) => (
     <QuestionCard
       question={item}
       onAnswered={handleAnswered}
-      onAskTutor={() => handleAskTutor(item)}
       headerHeight={headerHeight}
       bottomPadding={tabBarHeight}
     />
@@ -157,7 +142,7 @@ export default function PracticeScreen() {
         ref={flatListRef}
         data={questions}
         renderItem={renderQuestion}
-        keyExtractor={(item, index) => `${item.id}-${index}`}
+        keyExtractor={(item, index) => `${item.id}-${index}-${refreshKey}`}
         pagingEnabled
         showsVerticalScrollIndicator={false}
         snapToInterval={SCREEN_HEIGHT}
@@ -203,22 +188,9 @@ export default function PracticeScreen() {
         visible={isFiltersOpen}
         filters={filters}
         onFiltersChange={handleFiltersChange}
+        onApply={handleApplyFilters}
         onClose={() => setIsFiltersOpen(false)}
       />
-
-      <Modal
-        visible={showTutor}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowTutor(false)}
-      >
-        {selectedQuestion ? (
-          <AITutorChat
-            question={selectedQuestion}
-            onClose={() => setShowTutor(false)}
-          />
-        ) : null}
-      </Modal>
     </ThemedView>
   );
 }

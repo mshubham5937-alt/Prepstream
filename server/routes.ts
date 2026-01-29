@@ -28,12 +28,24 @@ Subject: ${subjectText}.
 Difficulty Level: ${filters.difficulty}/5.
 Language: ${filters.language}.
 
+CRITICAL FORMATTING RULES:
+1. DO NOT use LaTeX syntax (no \\frac, \\sum, \\int, \\left, \\right, etc.)
+2. Write mathematical expressions in plain readable text:
+   - Instead of "\\frac{a}{b}" write "(a/b)" or "a divided by b"
+   - Instead of "\\sum_{i=1}^{n}" write "sum from i=1 to n"
+   - Instead of "\\sqrt{x}" write "sqrt(x)" or "square root of x"
+   - Instead of "x^2" write "x^2" or "x squared"
+   - Instead of Greek letters like "\\omega" write "omega" or "w"
+3. Use simple notation: ^2 for squared, ^3 for cubed
+4. Write fractions as (numerator)/(denominator)
+
 Requirements:
 1. Questions must be conceptual or numerical, appropriate for ${filters.exam} exam preparation.
 2. Return ONLY a raw JSON array, no markdown code blocks.
-3. Format: [{ "text": "Question String", "options": ["A", "B", "C", "D"], "correctIndex": 0-3 (number), "solution": "Detailed explanation", "subject": "Physics|Chemistry|Maths|Biology" }]
+3. Format: [{ "text": "Question String", "options": ["A", "B", "C", "D"], "correctIndex": 0-3 (number), "solution": "Detailed explanation in plain text", "subject": "Physics|Chemistry|Maths|Biology" }]
 4. Ensure exactly one option is correct.
-5. Make questions challenging but fair for the difficulty level.`;
+5. Make questions challenging but fair for the difficulty level.
+6. All text MUST be human-readable without any special rendering.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -55,49 +67,6 @@ Requirements:
     } catch (error) {
       console.error("Error generating questions:", error);
       res.status(500).json({ error: "Failed to generate questions" });
-    }
-  });
-
-  app.post("/api/tutor/chat", async (req, res) => {
-    try {
-      const { question, userMessage, history } = req.body;
-
-      const contextPrompt = `You are a helpful, encouraging AI tutor for ${question.subject} helping a student preparing for competitive exams.
-
-Context about the current question:
-- Question: "${question.text}"
-- Correct Answer: "${question.correctAnswer}"
-- Solution: "${question.solution}"
-
-Student's question: "${userMessage}"
-
-Instructions:
-1. Answer the student's doubt clearly and concisely.
-2. Be encouraging and supportive.
-3. Keep your response brief (2-4 sentences) unless the student asks for more details.
-4. Use simple language and relate concepts to what they already know.
-5. If relevant, provide additional tips or related concepts.`;
-
-      const messages = (history || []).map((m: any) => ({
-        role: m.role === "assistant" ? "model" : m.role,
-        parts: [{ text: m.content }],
-      }));
-
-      messages.push({
-        role: "user",
-        parts: [{ text: contextPrompt }],
-      });
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: messages,
-      });
-
-      const responseText = response.text || "I couldn't generate a response. Please try again.";
-      res.json({ response: responseText });
-    } catch (error) {
-      console.error("Error in tutor chat:", error);
-      res.status(500).json({ error: "Failed to get response from AI tutor" });
     }
   });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -13,23 +13,22 @@ import Animated, {
   useSharedValue,
   withSpring,
   withTiming,
-  interpolateColor,
   FadeIn,
-  SlideInDown,
 } from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
+import { SolutionModal } from "@/components/SolutionModal";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import { Question } from "@/types/question";
 import { storage } from "@/lib/storage";
+import { cleanMathText } from "@/lib/math-utils";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 interface QuestionCardProps {
   question: Question;
   onAnswered: (isCorrect: boolean) => void;
-  onAskTutor: () => void;
   headerHeight: number;
   bottomPadding: number;
 }
@@ -39,7 +38,6 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export function QuestionCard({
   question,
   onAnswered,
-  onAskTutor,
   headerHeight,
   bottomPadding,
 }: QuestionCardProps) {
@@ -129,6 +127,9 @@ export function QuestionCard({
     transform: [{ scale: submitButtonScale.value }],
     opacity: submitButtonOpacity.value,
   }));
+
+  const cleanedQuestionText = cleanMathText(question.text);
+  const cleanedOptions = question.options.map((opt) => cleanMathText(opt));
 
   const OptionButton = ({
     option,
@@ -236,6 +237,8 @@ export function QuestionCard({
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled={true}
+        scrollEnabled={true}
       >
         <View style={styles.header}>
           <View style={styles.tagRow}>
@@ -277,7 +280,6 @@ export function QuestionCard({
                 name={isBookmarked ? "bookmark" : "bookmark"}
                 size={20}
                 color={isBookmarked ? theme.accent : theme.textSecondary}
-                style={isBookmarked ? { fill: theme.accent } : undefined}
               />
             </Pressable>
             <View style={styles.difficultyDots}>
@@ -300,11 +302,11 @@ export function QuestionCard({
         </View>
 
         <View style={styles.questionContainer}>
-          <ThemedText style={styles.questionText}>{question.text}</ThemedText>
+          <ThemedText style={styles.questionText}>{cleanedQuestionText}</ThemedText>
         </View>
 
         <View style={styles.optionsContainer}>
-          {question.options.map((option, index) => (
+          {cleanedOptions.map((option, index) => (
             <OptionButton key={index} option={option} index={index} />
           ))}
         </View>
@@ -342,47 +344,15 @@ export function QuestionCard({
               </ThemedText>
             </View>
 
-            <View style={styles.actionButtons}>
-              <Pressable
-                onPress={() => setShowSolution(!showSolution)}
-                style={[
-                  styles.actionButton,
-                  { backgroundColor: theme.backgroundDefault },
-                ]}
-              >
-                <Feather name="book-open" size={18} color={theme.text} />
-                <ThemedText style={styles.actionButtonText}>
-                  {showSolution ? "Hide" : "Solution"}
-                </ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={onAskTutor}
-                style={[styles.actionButton, { backgroundColor: theme.primary }]}
-              >
-                <Feather name="message-circle" size={18} color="#FFFFFF" />
-                <ThemedText style={[styles.actionButtonText, { color: "#FFFFFF" }]}>
-                  Ask AI Tutor
-                </ThemedText>
-              </Pressable>
-            </View>
-
-            {showSolution ? (
-              <Animated.View
-                entering={SlideInDown.duration(300)}
-                style={[
-                  styles.solutionContainer,
-                  { backgroundColor: theme.backgroundDefault },
-                ]}
-              >
-                <View style={styles.solutionHeader}>
-                  <Feather name="zap" size={18} color={theme.accent} />
-                  <ThemedText style={styles.solutionTitle}>Solution</ThemedText>
-                </View>
-                <ThemedText style={styles.solutionText}>
-                  {question.solution}
-                </ThemedText>
-              </Animated.View>
-            ) : null}
+            <Pressable
+              onPress={() => setShowSolution(true)}
+              style={[styles.solutionButton, { backgroundColor: theme.primary }]}
+            >
+              <Feather name="book-open" size={18} color="#FFFFFF" />
+              <ThemedText style={styles.solutionButtonText}>
+                View Solution
+              </ThemedText>
+            </Pressable>
           </Animated.View>
         ) : null}
       </ScrollView>
@@ -404,6 +374,13 @@ export function QuestionCard({
           </Pressable>
         </Animated.View>
       ) : null}
+
+      <SolutionModal
+        visible={showSolution}
+        solution={question.solution}
+        isCorrect={isCorrect}
+        onClose={() => setShowSolution(false)}
+      />
     </View>
   );
 }
@@ -515,42 +492,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-  actionButtons: {
-    flexDirection: "row",
-    gap: Spacing.md,
-    marginBottom: Spacing.lg,
-  },
-  actionButton: {
-    flex: 1,
+  solutionButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: Spacing.sm,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.lg,
     borderRadius: BorderRadius.md,
   },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  solutionContainer: {
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.md,
-  },
-  solutionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
-  },
-  solutionTitle: {
+  solutionButtonText: {
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: "700",
-  },
-  solutionText: {
-    fontSize: 15,
-    lineHeight: 24,
-    opacity: 0.9,
+    fontWeight: "600",
   },
   submitButtonContainer: {
     position: "absolute",

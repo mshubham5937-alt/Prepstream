@@ -27,6 +27,7 @@ interface FiltersModalProps {
   visible: boolean;
   filters: Filters;
   onFiltersChange: (filters: Filters) => void;
+  onApply: () => void;
   onClose: () => void;
 }
 
@@ -34,6 +35,7 @@ export function FiltersModal({
   visible,
   filters,
   onFiltersChange,
+  onApply,
   onClose,
 }: FiltersModalProps) {
   const { theme, isDark } = useTheme();
@@ -57,6 +59,12 @@ export function FiltersModal({
   const handleLanguageChange = (language: Language) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onFiltersChange({ ...filters, language });
+  };
+
+  const handleApply = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onApply();
+    onClose();
   };
 
   const validSubjects = SUBJECTS[filters.exam];
@@ -313,7 +321,7 @@ export function FiltersModal({
           ]}
         >
           <Pressable
-            onPress={onClose}
+            onPress={handleApply}
             style={[styles.applyButton, { backgroundColor: theme.text }]}
           >
             <ThemedText
